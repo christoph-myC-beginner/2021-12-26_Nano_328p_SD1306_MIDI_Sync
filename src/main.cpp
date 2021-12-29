@@ -2,6 +2,15 @@
 
 #include <Arduino.h>
 
+#include <Wire.h>
+#include "SSD1306Ascii.h"
+#include "SSD1306AsciiWire.h"
+// 0X3C+SA0 - 0x3C or 0x3D
+#define I2C_ADDRESS 0x3C
+// Define proper RST_PIN if required.
+#define RST_PIN -1
+SSD1306AsciiWire display;
+
 #include <OneButton.h>
 // Setup a new OneButton on named pin  
 OneButton button1(4, true);
@@ -11,40 +20,55 @@ OneButton button1(4, true);
 //Setup a new encoder
 DrehEnco DrehEncoEins(5, 6);
 
-//#include <SPI.h>
-#include <Wire.h>
-//include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <FastLED.h>
+#define NUM_LEDS 8
+// For led chips like WS2812, which have a data line, ground, and power, you just
+// need to define DATA_PIN.  
+// Clock pin only needed for SPI based chipsets when not using hardware SPI
+#define DATA_PIN 9
+//#define CLOCK_PIN 13
+// Define the array of leds
+CRGB leds[NUM_LEDS];
+#define BRIGHTNESS  15
+unsigned long blinkMillis = 0;
+int blinkZeit = 500;
 
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
-
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
-// The pins for I2C are defined by the Wire-library. 
-// On an arduino NANO:       A4(SDA), A5(SCL)
-#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3C for 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #include "lmenu.h"
 //Menue wichtige Eintraege 
 menu a1,a2,a3,a4,a1a1,a1a2,a1a3,a2a1,a2a2,a2a3; //Menues entsprechend des struct definieren
 
 //Menue-Eintraege hier vornehmen
-char* a1text= "A1: fct or submenu";
-char* a2text= "A2: fct or submenu";
-char* a3text= "A3: fct or submenu";
-char* a4text= "A4: fct or submenu";
-char* a1a1text= "A1A1: subm of A1";
-char* a1a2text= "A1A2: subm of A1";
-char* a1a3text= "A1A3: subm of A1";
-char* a2a1text= "A2A1: submenu of A2";
-char* a2a2text= "A2A2: submenu of A2";
-char* a2a3text= "A2A3: submenu of A2";
 
+static char* a1text= "A1: fct or submenu";
+static char* a2text= "A2: fct or submenu";
+static char* a3text= "A3: fct or submenu";
+static char* a1a1text= "A1A1: subm of A1";
+static char* a1a2text= "A1A2: subm of A1";
+static char* a1a3text= "A1A3: subm of A1";
+static char* a2a1text= "A2A1: submenu of A2";
+static char* a2a2text= "A2A2: submenu of A2";
+static char* a2a3text= "A2A3: submenu of A2";
+static char* a4text= "A4: fct or submenu";
+/*
+char* a1text[]   PROGMEM= "A1: fct or submenu";
+char* a2text[]   PROGMEM= "A2: fct or submenu";
+char* a3text[]   PROGMEM= "A3: fct or submenu";
+char* a4text[]   PROGMEM= "A4: fct or submenu";
+char* a1a1text[] PROGMEM= "A1A1: subm of A1";
+char* a1a2text[] PROGMEM= "A1A2: subm of A1";
+char* a1a3text[] PROGMEM= "A1A3: subm of A1";
+char* a2a1text[] PROGMEM= "A2A1: submenu of A2";
+char* a2a2text[] PROGMEM= "A2A2: submenu of A2";
+char* a2a3text[] PROGMEM= "A2A3: submenu of A2";
+*/
 int vorZurueckB; //Variable die Mittels Knopf verändert wird; muss manuell zurück gesetzt werden
 
 int setValFlag;  //Variable für Eingabe einer Variablen
+
+int toggleInterval = 100;
+int toggleMulti = 5;
+char* toggleUnit = "bpm";
 
 //ENDE Menue wichtige Eintraege 
 
@@ -55,6 +79,7 @@ void longPressStart1();
 void longPress1();
 void longPressStop1();
 
+void a1action();
 void a2action();
 void a3action();
 void a4action();
@@ -64,7 +89,6 @@ void a1a3action();
 void a2a1action();
 void a2a3action();
 void link_menu();
-
 //End declaration of functions
 
 
@@ -73,56 +97,45 @@ void setup() {
   Serial.begin(9600);
   // enable the standard led on pin 13.
   pinMode(LED_BUILTIN, OUTPUT);      // sets the digital pin as output
-  
+  pinMode(DATA_PIN, OUTPUT);
   // link the doubleclick function to be called on a doubleclick event.
-    // link the button 1 functions.
+  // link the button 1 functions.
   button1.attachClick(click1);
   button1.attachDoubleClick(doubleclick1);
   button1.attachLongPressStart(longPressStart1);
   button1.attachLongPressStop(longPressStop1);
   button1.attachDuringLongPress(longPress1);
   
-  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if(!display.begin(SSD1306_EXTERNALVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    Serial.println(F("WTF!?"));
-    delay(2000);
-  }
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    Serial.println(F("Really WTF!?"));
-    delay(2000);
-  }
-  else {
-    Serial.println("Display should do");
-  }
-    
-  // Clear the buffer
-  display.clearDisplay();
+  //Setup of display SSD1306Ascii
+  Wire.begin();
+  Wire.setClock(400000L);
+  display.begin(&Adafruit128x64, I2C_ADDRESS, RST_PIN);
+  display.setFont(Arial14);
 
-  // Draw a single pixel in white
-  display.drawPixel(10, 10, SSD1306_WHITE);
+  display.clear();
+  //display.setLetterSpacing(1);
+  display.setCursor(10, 2);
+  display.println("Last Change ");
+  display.setCursor(10, 5);
+  display.println(__DATE__);
   delay(2000);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(10,20);
-  display.println("--Start--");
-  display.display();
-  delay(1000);
-  display.clearDisplay();
-  display.setCursor(20,20);
-  display.println("--Continue--");
-  display.display();
-  
+
+  FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);  //
+  FastLED.setBrightness(  BRIGHTNESS );
+
   Serial.println("++Start++"); //debug
+  
   //Setup Menue
   //menu_lcdInit(&lcd);
-  menu_ssd1306_init(&display);
+  //menu_ssd1306_init(&display);
   //menu_ST7735_init(&tft);
+  //menu_u8g2_init(&u8g2);
+  menu_ssd1306Ascii_init(&display);
   link_menu();
   menu_init(&a1, &setValFlag);
   menu_print3();
-  menu_ssd1306Print();
+  menu_ssd1306AsciiPrint();
+  //menu_u8g2Print();
   //ENDE Setup Menue
 }
 
@@ -131,9 +144,29 @@ void loop() {
   button1.tick();
   DrehEncoEins.check();
   int aufAbB = DrehEncoEins.getStep();
-  
   workMenu(aufAbB, vorZurueckB);
   vorZurueckB = 0;
+  
+  if(millis() - blinkMillis > blinkZeit) {
+    blinkMillis = millis();
+    static int i;
+    
+    if (i == 0) {
+      leds[i] = CRGB::Red;
+      leds[7] = CRGB::Black;
+      i++;
+    }
+    else if(i > 7) {
+      i = 0;
+    }
+    else {
+      leds[i] = CRGB::PaleVioletRed;
+      leds[i-1] = CRGB::Black;
+      i++;
+    }
+    FastLED.show();
+  }
+  
 }
 
 // This function will be called when the button1 was pressed 1 time.
@@ -198,10 +231,10 @@ void a1a1action(){
   //Serial.println("A1a1 action!\n");
   if (setValFlag == 0) {
     setValFlag = 1;
-    //ptr_init(&multiplier_13, &toggleInterval_13, dutyUnit_blue2);
+    ptr_init(&toggleMulti, &toggleInterval, toggleUnit);
     //drawVarSet(toggleInterval_13);
     //drawVarSet_lcd(toggleInterval_13);
-    //drawVarSet_ssd1306(toggleInterval_13);
+    drawVarSet_ssd1306Ascii(toggleInterval);
   }
 }
 
@@ -258,12 +291,14 @@ void a2a3action(){
 }
 //LINK Menue
 void link_menu(){
+  Serial.println("Debug Menu linked");
 //Main Menu
   a1.text = a1text;
   a1.up = &a4;
   a1.down = &a2;
   a1.ok = &a1a1;
   a1.back = &a1;
+  a1.function = a1action;
 
   a2.text = a2text;
   a2.up = &a1;
