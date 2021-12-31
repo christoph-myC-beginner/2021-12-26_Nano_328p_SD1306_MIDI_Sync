@@ -31,7 +31,6 @@ int DrehEnco::getStep() {
     else {
       return (0);
     }
-    
   }
   else {
     return (0);
@@ -54,8 +53,8 @@ void DrehEnco::check(void)
   
   bool A = digitalRead(PinSpurA);
 	bool B = digitalRead(PinSpurB);
-  bool Aa;
-  bool Ba;
+  bool Aa = 0;
+  bool Ba = 0;
 	
 	if (A != Aa) { //also A hat sich gegenüber vorherigem Check veraendert
     if (A != B) {     //Drehung positiv
