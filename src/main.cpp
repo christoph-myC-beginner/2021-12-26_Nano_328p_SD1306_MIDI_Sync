@@ -2,6 +2,15 @@
 
 #include <Arduino.h>
 
+//#include <MIDI.h>
+#include <SoftwareSerial.h>
+//using Transport = MIDI_NAMESPACE::SerialMIDI<SoftwareSerial>;
+int rxPin = 11;
+int txPin = 12;
+SoftwareSerial midiSerial = SoftwareSerial(rxPin, txPin);
+//Transport serialMIDI(midiSerial);
+//MIDI_NAMESPACE::MidiInterface<Transport> MIDI((Transport&)serialMIDI);
+
 #include <Wire.h>
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
@@ -14,7 +23,7 @@ SSD1306AsciiWire display;
 #include <OneButton.h>
 // Setup a new OneButton on named pin  
 OneButton button1(4, true);
-//OneButton button2(7, true);
+OneButton button2(3, true);
 
 #include "DrehEnco.h"
 //Setup a new encoder
@@ -41,7 +50,7 @@ menu a1,a2,a3,a4,a1a1,a1a2,a1a3,a2a1,a2a2,a2a3; //Menues entsprechend des struct
 //Menue-Eintraege hier vornehmen
 static char* a1text= "A1: fct or submenu";
 static char* a2text= "A2: fct or submenu";
-static char* a3text= "A3: fct or submenu";
+static char* a3text= "A3: Tap Beat";
 static char* a4text= "A4: Exit";
 static char* a1a1text= "A1A1: subm of A1";
 static char* a1a2text= "A1A2: subm of A1";
@@ -58,24 +67,44 @@ int toggleInterval = 100;
 int toggleMulti = 5;
 char* toggleUnit = "mys";
 
-int bpm = 60;
+int bpm = 40;
 int bpmMulti = 1;
 char* bpmUnit = "bpm";
 
 //ENDE Menue wichtige Eintraege 
 unsigned long refreshMillis = 0;
 unsigned long bPeriodMillis = 0;
-int beatPeriod = 0;
-int msgInterval = 1000;
-int refreshRate = 150;
+unsigned long beatMidiMillisOne = 0;
+unsigned long beatMidiMillisTwo = 0;
+unsigned long beatMidiPeriod = 0;
+unsigned long beatMillisTest = 0;
+unsigned long beatMillisTestOne = 0;
+unsigned long beatMillisTestTwo = 0;
+
+int bpmMidi = 0; //beats per Minute durch Auswertung der Midi Schnittstelle
+unsigned long beatPeriod = 0;
+int msgInterval = 2900; //Interval mit dem die Serial Messages zum Debug ausgegeben werden
+int refreshRate = 150; //refresh Rate des Displays in der showMain Routine
 int beatIndex = 0;  // beat 1 + 2 + 3 + 4 + translates as 0 1 2 3 4 5 6 7
-int beatIndexOld = 0;
+//int beatIndexOld = 0;
+int beatIndexComp = 0;
+int beatMidiIndexComp = 0;
+int flashTestCnt = 0;
 int beatInterruptCnt = 0;
+int beatMidiCnt = 0;
+//int beatMidiQuartCnt = 0;
+int beatMidiInterruptCnt = 0;
 int onTimeOne = 0;
-int onTimeOnePercent = 40;
-int onTimeHalfsPercent = 30;
+int onTimeOnePercent = 20;
+int onTimeHalfsPercent = 10;
 int onTimeHalfs = 0;
+int tapInterruptCnt = 0;
+int tapCnt = 9;
+#define tapPin 10
+//bool tapFlag = 0;
+bool doTapFlag = 0;
 bool refreshFlag = 1;
+bool refreshSyncFlag = 1;
 bool clearFlag = 1;
 bool enterMenu = 0;
 bool debugFlag = 0;
@@ -88,6 +117,8 @@ void doubleclick1();
 void longPressStart1();
 void longPress1();
 void longPressStop1();
+void click2();
+void doubleclick2();
 
 void a1action();
 void a2action();
@@ -101,18 +132,32 @@ void a2a3action();
 void link_menu();
 
 bool showMain(int refreshRate_f, bool refreshFlag_f, bool clearFlag_f);
-void showBeats();
-void flashLED();
+bool showMidiSync (bool refresh_f);
+void showBeats(int beatIndex_f);
+void flashLED(int beatIndex_f);
+bool tapBeatOut (int beatIndex_f, bool doFlag_f);
 ISR(TIMER2_COMPA_vect);
+
+void handleMidiClock(void);
+void handleISRResult(void);
+
+void handleClock(void);
+void handleStart(void);
+void handleContinue(void);
+void handleStop(void);
 //End declaration of functions
 
 ///// SETUP /// SETUP /// SETUP /////
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(9600);
+  Serial.begin(115200);
   // enable the standard led on pin 13.
   pinMode(LED_BUILTIN, OUTPUT);      // sets the digital pin as output
+  digitalWrite(LED_BUILTIN, HIGH);
   pinMode(DATA_PIN, OUTPUT);
+  pinMode(tapPin, OUTPUT);
+  digitalWrite(tapPin, HIGH);
+  pinMode(7, OUTPUT);
   // link the doubleclick function to be called on a doubleclick event.
   // link the button 1 functions.
   button1.attachClick(click1);
@@ -120,6 +165,13 @@ void setup() {
   button1.attachLongPressStart(longPressStart1);
   button1.attachLongPressStop(longPressStop1);
   button1.attachDuringLongPress(longPress1);
+  button2.attachClick(click2);
+  button2.attachDoubleClick(doubleclick2);
+  //MIDI Setup
+  //MIDI.setHandleClock(handleClock);
+  //MIDI.setHandleStart(handleStart);
+  //MIDI.begin(); // default Channel 1
+  midiSerial.begin(31250);
   
   //Setup of display SSD1306Ascii
   Wire.begin();
@@ -133,11 +185,12 @@ void setup() {
   display.println(__DATE__);
   delay(200);
   display.clear();
-
+  
+  //Setup of WS2812 LEDs
   FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);  //
   FastLED.setBrightness(  BRIGHTNESS );  
   for (int i = 0; i<8; i++) {
-    leds[i] = CRGB::GreenYellow;
+    leds[i] = CRGB::Orange;
     FastLED.show();
     delay(40);
   }
@@ -146,9 +199,7 @@ void setup() {
     FastLED.show();
     delay(40);
   }
-  
-  Serial.println("++Start++"); //debug
-  
+    
   //Setup Menue
   //menu_lcdInit(&lcd);
   //menu_ssd1306_init(&display);
@@ -157,10 +208,10 @@ void setup() {
   menu_ssd1306Ascii_init(&display);
   link_menu();
   menu_init(&a1, &setValFlag);
-  menu_print3();
+  //menu_print3();
   //menu_ssd1306AsciiPrint();
   //menu_u8g2Print();
-  //ENDE Setup Menue
+  //ENDE Setup MENUE
 
   // timer2
   
@@ -187,12 +238,47 @@ void setup() {
 }
 //End of SETUP
 
-///// LOOP /// LOOP /// LOOP /////
+///// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /////
 void loop() {
   // put your main code here, to run repeatedly:
+    
+  if (debugFlag == 1 && beatIndex == 7) {
+    beatMillisTest = 0;
+    beatMillisTestOne = 0;
+    beatMillisTestTwo = 0;
+  }
+  else {}
+  if (beatIndex == 0) {
+    beatMillisTestOne = millis();
+  }
+  if (beatIndex == 2) {
+    beatMillisTestTwo = millis();
+  }
+  if (debugFlag == 0) {
+    beatMillisTest = beatMillisTestTwo - beatMillisTestOne;
+  }
+
+  if (beatIndex == 0 || beatIndex == 2 || beatIndex == 4 || beatIndex == 6) {
+    digitalWrite(7, HIGH);
+  }
+  else {
+    digitalWrite(7, LOW);
+  }
+
+  if (midiSerial.available() > 0 && doTapFlag == 0) {
+    if (midiSerial.read() == 248) {
+      handleMidiClock();
+    }
+  }
+  handleISRResult();
+
   serialMsg(msgInterval);
+  
   button1.tick();
-  //DrehEncoEins.check();
+  button2.tick();
+
+  DrehEncoEins.check();
+
   int aufAbB = DrehEncoEins.getStep(); //liefert nur alle 10ms
 
   if (enterMenu == 1) {
@@ -209,19 +295,63 @@ void loop() {
       uint16_t zwiB = onTimeHalfsPercent / 10;
       onTimeHalfs = beatPeriod * zwiB / 10; //onTimeHalfsPercent / 100;
     }
-    refreshFlag = showMain(refreshRate, refreshFlag, clearFlag);
+    refreshFlag = showMain(refreshRate, refreshFlag, clearFlag); //mit refreshFlag wird das Display aktualisiert, aber maximal alle x ms je nach refreshRate
     clearFlag = 0;
-    if (beatIndexOld != beatIndex) {
-      beatIndexOld = beatIndex;
-      showBeats();
+    refreshSyncFlag = showMidiSync (refreshSyncFlag);
+    if (beatIndex == 7) {
+      refreshSyncFlag = 1;
     }
+    showBeats(beatIndex);  
   }
-
-  flashLED();
   
+  doTapFlag = tapBeatOut(beatIndex, doTapFlag);
+
+  flashLED(beatIndex); //Ansteuerung der LEDs via FastLED abhaengig vom beatIndex
   
 }
-//End of LOOP
+//End of LOOP ///End of LOOP ///End of LOOP ///End of LOOP ///
+
+bool tapBeatOut (int beatIndex_f, bool doFlag_f) {
+  static unsigned long tapMillis_f;
+  static int beatIndexOld_f;
+  static int tapCnt_f;
+  if (doFlag_f == 1) {
+    if (beatIndex_f != beatIndexOld_f) { // mach was nur beim Wechsel des BeatIndex
+      beatIndexOld_f = beatIndex_f;      // beatIndex weiter geben
+      tapMillis_f = millis();            // merk Dir den Zeitpunkt des Beatwechsels
+      if (beatIndex_f == 0 || beatIndex_f == 2 || beatIndex_f == 4 || beatIndex_f == 6 ) { //nur die Indizes mit ganzen Zaehlzeiten
+        digitalWrite(tapPin, LOW);              // setze den Ausgang LOW
+        digitalWrite(LED_BUILTIN, LOW);
+        tapCnt_f = tapCnt_f + 1;
+        beatIndexComp = 0;
+        beatMidiIndexComp = 0;
+      }
+    }
+    else if (millis() - tapMillis_f > 80) { //nach Ablauf von 200ms nach dem Beatwechsel
+      digitalWrite(tapPin, HIGH);                 //setze den Ausgang HIGH
+      digitalWrite(LED_BUILTIN, HIGH);
+      if (tapCnt_f > 4) {                   //nach Durchgang von 4 "Taps" setze doFlag_f auf "erledigt"
+        tapCnt_f = 0;
+        doFlag_f = 0;
+      }
+    }
+  }
+  return doFlag_f;
+}
+
+void handleMidiClock(void) {
+  
+  if(beatMidiCnt == 24) { //96 = 4* (24 PPQN) Achtung zugehoeriger Zaehler beatMidiCnt wird auf 1 zurueckgesetzt
+    beatMidiMillisOne = millis();
+    beatMidiPeriod = (beatMidiMillisOne - beatMidiMillisTwo);
+    beatMidiMillisTwo = millis();
+    bpmMidi = round(60000/beatMidiPeriod);
+    beatMidiCnt = 0;
+    beatMidiIndexComp = beatMidiIndexComp + 2;
+  }
+  
+  beatMidiCnt = beatMidiCnt + 1;
+}
 
 bool showMain(int refreshRate_f, bool refreshFlag_f, bool clearFlag_f) {
   static unsigned long refreshMillis;
@@ -252,207 +382,216 @@ bool showMain(int refreshRate_f, bool refreshFlag_f, bool clearFlag_f) {
   display.setCursor(3, 4);
   display.setLetterSpacing(4);
   display.println("1+2+3+4+");    
-  display.setFont(font8x8); //ZevvPeep8x16
-  display.setCursor(2, 7);
-  display.print("sync");
-  display.setCursor(87, 7);
-  display.print("108");
+  //display.setFont(font8x8); //ZevvPeep8x16
+  //display.setCursor(2, 7);
+  //display.print("sync");
+  //display.setCursor(87, 7);
+  //display.print(bpmMidi);
   }
   return refreshFlag_f; 
 }
 
-void showBeats() {
-  display.setFont(fixed_bold10x15);
-  display.setCursor(3, 4);
-  display.setLetterSpacing(4);
-  display.setInvertMode(1);
-  switch(beatIndex) {
-    case 0:
-      display.setCursor(87, 4);
-      display.setInvertMode(0);
-      display.print("4+");
-      display.setCursor(3, 4);
-      display.setInvertMode(1);
-      display.println("1"); 
-    break; 
-    case 1:
-      display.setInvertMode(0);
-      display.print("1");
-      display.setInvertMode(1);
-      display.println("+");
-    break;
-    case 2:
-      display.setInvertMode(0);
-      display.print("1+");
-      display.setInvertMode(1);
-      display.println("2"); 
-    break;
-    case 3:
-      display.setInvertMode(0);
-      display.print("1+2");
-      display.setInvertMode(1);
-      display.println("+"); 
-    break;
-    case 4:
-      display.setInvertMode(0);
-      display.print("1+2+");
-      display.setInvertMode(1);
-      display.println("3"); 
-    break;
-    case 5:
-      display.setInvertMode(0);
-      display.print("1+2+3");
-      display.setInvertMode(1);
-      display.println("+"); 
-    break;
-    case 6:
-      display.setInvertMode(0);
-      display.print("1+2+3+");
-      display.setInvertMode(1);
-      display.println("4"); 
-    break;
-    case 7:
-      display.setInvertMode(0);
-      display.print("1+2+3+4");
-      display.setInvertMode(1);
-      display.println("+"); 
-    break;
-    default:
-    break;
-    display.setInvertMode(0);
+bool showMidiSync (bool refresh_f) {
+  if (refresh_f == 1) {
+    refresh_f = 0;
+    display.setFont(font8x8); //ZevvPeep8x16
+    display.setCursor(2, 7);
+    display.print("sync");
+    display.setCursor(40, 7);
+    int zwiD = abs(beatPeriod-beatMidiPeriod);
+    if (beatMidiPeriod < beatPeriod) {
+      display.print("-");
+    }
+    else {
+      display.print(" ");
+    }
+    display.print(zwiD);
+    display.print("   ");
+    display.setCursor(87, 7);
+    if (bpm <100) {
+      display.print("| ");
+      display.print(bpmMidi);
+      display.print(" ");
+    }
+    else {
+      display.print("| ");
+      display.print(bpmMidi);
+      display.print(" ");
+    }
   }
-   
+  else {
+
+  }
+  return refresh_f;
 }
 
-void flashLED() {
-  switch (beatIndex) {
+void showBeats(int beatIndex_f) {
+  static int beatIndexOld_f;
+  if (beatIndex_f != beatIndexOld_f) {
+    beatIndexOld_f = beatIndex_f;
+    display.setFont(fixed_bold10x15);
+    display.setCursor(3, 4);
+    display.setLetterSpacing(4);
+    display.setInvertMode(1);
+    switch(beatIndex_f) {
+      case 0:
+        display.setCursor(87, 4);
+        display.setInvertMode(0);
+        display.print("4+");
+        display.setCursor(3, 4);
+        display.setInvertMode(1);
+        display.println("1"); 
+        display.setInvertMode(0);
+      break; 
+      case 1:
+        display.setInvertMode(0);
+        display.print("1");
+        display.setInvertMode(1);
+        display.println("+");
+        display.setInvertMode(0);
+      break;
+      case 2:
+        display.setInvertMode(0);
+        display.print("1+");
+        display.setInvertMode(1);
+        display.println("2"); 
+        display.setInvertMode(0);
+      break;
+      case 3:
+        display.setInvertMode(0);
+        display.print("1+2");
+        display.setInvertMode(1);
+        display.println("+"); 
+        display.setInvertMode(0);
+      break;
+      case 4:
+        display.setInvertMode(0);
+        display.print("1+2+");
+        display.setInvertMode(1);
+        display.println("3"); 
+        display.setInvertMode(0);
+      break;
+      case 5:
+        display.setInvertMode(0);
+        display.print("1+2+3");
+        display.setInvertMode(1);
+        display.println("+"); 
+        display.setInvertMode(0);
+      break;
+      case 6:
+        display.setInvertMode(0);
+        display.print("1+2+3+");
+        display.setInvertMode(1);
+        display.println("4"); 
+        display.setInvertMode(0);
+      break;
+      case 7:
+        display.setInvertMode(0);
+        display.print("1+2+3+4");
+        display.setInvertMode(1);
+        display.println("+"); 
+        display.setInvertMode(0);
+      break;
+      default:
+      break;
+    }
+  }   
+}
+
+void flashLED(int beatIndex_f) {
+  static unsigned long bPeriodMillis_f;
+  static int beatIndexOld_f;
+  static bool doFlag_f;
+  
+  if (beatIndexOld_f != beatIndex_f) {
+    beatIndexOld_f = beatIndex_f;
+    doFlag_f = 1;
+    bPeriodMillis_f = millis();
+  
+    switch (beatIndex_f) {
+      case 0:
+          FastLED.setBrightness(30);
+          leds[0] = CRGB::Red;
+      break;
+      case 1:  // beat 1+
+          FastLED.setBrightness(3); 
+          leds[1] = CRGB::Yellow;
+      break;
+      case 2:  //beat 2
+          FastLED.setBrightness(15);
+          leds[2] = CRGB::Blue;
+      break;
+      case 3:  //beat 2+
+          FastLED.setBrightness(3);
+          leds[3] = CRGB::Yellow;
+      break;
+      case 4:  //beat 3
+          FastLED.setBrightness(15);
+          leds[4] = CRGB::Blue;
+      break;
+      case 5:  //beat 3+
+          FastLED.setBrightness(3);
+          leds[5] = CRGB::Yellow;
+      break;
+      case 6:  // beat 4
+          FastLED.setBrightness(15);
+          leds[6] = CRGB::Blue;
+      break;
+      case 7:  //beat 4+
+          FastLED.setBrightness(3);
+          leds[7] = CRGB::Yellow; 
+      break;
+      default:
+        for (int k = 0; k < 8; k++) {
+          leds[k] = CRGB::Black;
+        }
+      break;
+    }
     
-    case 0:
-      if(millis() - bPeriodMillis < onTimeOne) { //bPeriodMillis = millis() bei Wechsel des Index
-        leds[0] = CRGB::Red;
-        FastLED.show();
-      }
-      else {
-        leds[0] = CRGB::Black;
-        FastLED.show();
-      }
-    break;
-    case 1:  // beat 1+
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        FastLED.setBrightness(5); 
-        leds[1] = CRGB::Yellow;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    case 2:  //beat 2
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        leds[2] = CRGB::Green;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    case 3:  //beat 2+
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        FastLED.setBrightness(5);
-        leds[3] = CRGB::Yellow;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    case 4:  //beat 3
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        leds[4] = CRGB::Green;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    case 5:  //beat 3+
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        FastLED.setBrightness(5);
-        leds[5] = CRGB::Yellow;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    case 6:  // beat 4
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        leds[6] = CRGB::Green;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    case 7:  //beat 4+
-      if (millis() - bPeriodMillis < onTimeHalfs) {
-        FastLED.setBrightness(5);
-        leds[7] = CRGB::Yellow;
-        FastLED.show();      //Led [1] an
-      }
-      else {
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-          FastLED.show();     //led [1] aus
-        }
-      }
-    break;
-    default:
-    
-    break;
+  }
+  else if (millis() - bPeriodMillis_f > onTimeOne) {  //onTimeOne
+    leds[0] = CRGB::Black;
+    FastLED.show();
+    flashTestCnt = flashTestCnt + 1;
+    doFlag_f = 0;
+  }
+  else if (millis() - bPeriodMillis_f > onTimeHalfs) {  //onTimeHalfs
+    for (int k = 1; k < 8; k++) {
+      leds[k] = CRGB::Black;
+    }
+    FastLED.show(); 
+    flashTestCnt = flashTestCnt + 1;
+    doFlag_f = 0;
+  }
+  if (doFlag_f == 1) {
+    FastLED.show(); 
+    flashTestCnt = flashTestCnt + 1;
+    doFlag_f = 0;
   }
 }
 
 ISR(TIMER2_COMPA_vect) {
   // timer2 interrupt to-do code here
-  DrehEncoEins.check();
-  
   beatInterruptCnt = beatInterruptCnt + 1;
-  if (beatInterruptCnt * 4 >= beatPeriod ) {
+  OCR2A = 124;        // set compare match register prescaler 256; 125 -> 2ms 0 & 124 = 125
+}
+
+void handleISRResult(void) {
+  if (beatInterruptCnt >= beatPeriod/4 ) {  // * 4 fuer Achtelnoten (2*2 fuer 2ms und doppelte Anzahl pro beatPeriod)
     beatInterruptCnt = 0;
     beatIndex = beatIndex + 1;
+    beatIndexComp = beatIndexComp + 1;
+    //bPeriodMillis = millis();
     if (beatIndex > 7) {
       beatIndex = 0;
     }
-    bPeriodMillis = millis();
-    //digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   }
-  
-  OCR2A = 125;        // set compare match register prescaler 1024; 250 -> 16ms; 125 -> 8ms
 }
 
 void serialMsg(int msgZeit) {
-  static unsigned long blinkMillis; //eigene Variable gleichen Namens, unabhaengig von der Variable in der "toggle-Funktion"
-  if (millis() - blinkMillis > msgZeit) {
-    blinkMillis = millis();
+  static unsigned long msgMillis; 
+  if (millis() - msgMillis > msgZeit) {
+    msgMillis = millis();
     
     Serial.println("Debug serialMsg");
     Serial.print("Vergangene Millisekunden seit Programmstart: ");
@@ -460,14 +599,22 @@ void serialMsg(int msgZeit) {
     Serial.println("----- ----- ----- ----- -----");
     Serial.print("bpm = ");
     Serial.println(bpm);
+    Serial.print("bpmMidi = ");
+    Serial.println(bpmMidi);
     Serial.print("beatPeriod = ");
     Serial.println(beatPeriod);
-    Serial.print("beatInterruptCnt = ");
-    Serial.println(beatInterruptCnt);
+    Serial.print("beatMidiPeriod = ");
+    Serial.println(beatMidiPeriod);
+    Serial.print("beatIndexComp = "); 
+    Serial.println(beatIndexComp);
+    Serial.print("beatMidiIndexComp = "); 
+    Serial.println(beatMidiIndexComp);
     Serial.print("enterMenu = ");
     Serial.println(enterMenu);
-    Serial.print("debugFlag = ");
-    Serial.println(debugFlag);
+    Serial.print("timeDiff Index 0 and 2 = ");
+    Serial.println(beatMillisTest);
+    Serial.print("flashTestCnt = ");
+    Serial.println(flashTestCnt);
     debugFlag = 0;
   }
 }
@@ -507,6 +654,17 @@ void longPressStop1() {
   Serial.println("Button 1 longPress stop");
 } // longPressStop1
 
+void click2() {
+  Serial.println("Button 2 click.");
+  doTapFlag = 1;
+} // click1
+
+void doubleclick2() {
+  Serial.println("Button 2 doubleclick.");
+  beatIndexComp = 0;
+  beatMidiIndexComp = 0;
+} // doubleclick2
+
 //Menue Funktionen bei Aufruf
 void a1action(){ 
   Serial.println("A1 action!\n");
@@ -516,13 +674,14 @@ void a2action(){
 }
 void a3action(){
   //Serial.println("A3 action!\n");
-  if (setValFlag == 0) {
-    setValFlag = 1;
+  //tapCnt = 0;
+  //if (setValFlag == 0) {
+    //setValFlag = 1;
     //ptr_init(&dutyMultiServo, &dutyOnServo, dutyUnitServo);
     //drawVarSet(dutyOnServo);
     //drawVarSet_lcd(dutyOnServo);
     //drawVarSet_ssd1306(dutyOnServo);
-  }
+  //}
 }
 void a4action(){ 
   Serial.println("A4 action!\n");
@@ -596,7 +755,7 @@ void a2a3action(){
 
 //LINK Menue
 void link_menu(){
-  Serial.println("Debug Menu linked");
+  //Serial.println("Debug Menu linked");
 //Main Menu
   a1.text = a1text;
   a1.up = &a4;
