@@ -80,19 +80,18 @@ unsigned long beatMidiPeriod = 0;
 unsigned long beatMillisTest = 0;
 unsigned long beatMillisTestOne = 0;
 unsigned long beatMillisTestTwo = 0;
+unsigned long beatPeriod = 0;
 
 int bpmMidi = 0; //beats per Minute durch Auswertung der Midi Schnittstelle
-unsigned long beatPeriod = 0;
 int msgInterval = 2900; //Interval mit dem die Serial Messages zum Debug ausgegeben werden
 int refreshRate = 150; //refresh Rate des Displays in der showMain Routine
 int beatIndex = 0;  // beat 1 + 2 + 3 + 4 + translates as 0 1 2 3 4 5 6 7
-//int beatIndexOld = 0;
 int beatIndexComp = 0;
 int beatMidiIndexComp = 0;
 int flashTestCnt = 0;
 int beatInterruptCnt = 0;
 int beatMidiCnt = 0;
-//int beatMidiQuartCnt = 0;
+int beatMidiIndex = 0;
 int beatMidiInterruptCnt = 0;
 int onTimeOne = 0;
 int onTimeOnePercent = 20;
@@ -101,7 +100,7 @@ int onTimeHalfs = 0;
 int tapInterruptCnt = 0;
 int tapCnt = 9;
 #define tapPin 10
-//bool tapFlag = 0;
+bool flashExtern = 1;
 bool doTapFlag = 0;
 bool refreshFlag = 1;
 bool refreshSyncFlag = 1;
@@ -269,6 +268,13 @@ void loop() {
     if (midiSerial.read() == 248) {
       handleMidiClock();
     }
+    else if (midiSerial.read() == 250) {
+      //beatInterruptCnt = 0;
+      beatIndex = 0;
+      beatMidiIndex = 0;
+      beatIndexComp = 0;
+      beatMidiIndexComp = 0;
+    }
   }
   handleISRResult();
 
@@ -305,8 +311,8 @@ void loop() {
   }
   
   doTapFlag = tapBeatOut(beatIndex, doTapFlag);
-
-  flashLED(beatIndex); //Ansteuerung der LEDs via FastLED abhaengig vom beatIndex
+  
+  flashLED(beatMidiIndex); //Ansteuerung der LEDs via FastLED abhaengig vom beatIndex
   
 }
 //End of LOOP ///End of LOOP ///End of LOOP ///End of LOOP ///
@@ -347,6 +353,10 @@ void handleMidiClock(void) {
     beatMidiMillisTwo = millis();
     bpmMidi = round(60000/beatMidiPeriod);
     beatMidiCnt = 0;
+    beatMidiIndex = beatMidiIndex + 2;
+    if (beatMidiIndex > 7) {
+      beatMidiIndex = 0;
+    }
     beatMidiIndexComp = beatMidiIndexComp + 2;
   }
   
@@ -501,11 +511,15 @@ void showBeats(int beatIndex_f) {
 void flashLED(int beatIndex_f) {
   static unsigned long bPeriodMillis_f;
   static int beatIndexOld_f;
-  static bool doFlag_f;
+  static bool doFlagA_f;
+  static bool doFlagB_f;
+  static bool doFlagC_f;
   
   if (beatIndexOld_f != beatIndex_f) {
     beatIndexOld_f = beatIndex_f;
-    doFlag_f = 1;
+    doFlagA_f = 1;
+    doFlagB_f = 1;
+    doFlagC_f = 1;
     bPeriodMillis_f = millis();
   
     switch (beatIndex_f) {
@@ -549,24 +563,24 @@ void flashLED(int beatIndex_f) {
     }
     
   }
-  else if (millis() - bPeriodMillis_f > onTimeOne) {  //onTimeOne
+  else if (millis() - bPeriodMillis_f > onTimeOne && doFlagB_f == 1) {  //onTimeOne
     leds[0] = CRGB::Black;
     FastLED.show();
     flashTestCnt = flashTestCnt + 1;
-    doFlag_f = 0;
+    doFlagB_f = 0;
   }
-  else if (millis() - bPeriodMillis_f > onTimeHalfs) {  //onTimeHalfs
+  else if (millis() - bPeriodMillis_f > onTimeHalfs && doFlagC_f == 1) {  //onTimeHalfs
     for (int k = 1; k < 8; k++) {
       leds[k] = CRGB::Black;
     }
     FastLED.show(); 
     flashTestCnt = flashTestCnt + 1;
-    doFlag_f = 0;
+    doFlagC_f = 0;
   }
-  if (doFlag_f == 1) {
+  if (doFlagA_f == 1) {
     FastLED.show(); 
     flashTestCnt = flashTestCnt + 1;
-    doFlag_f = 0;
+    doFlagA_f = 0;
   }
 }
 
