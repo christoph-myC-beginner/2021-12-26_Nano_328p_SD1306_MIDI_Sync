@@ -7,7 +7,7 @@
 //using Transport = MIDI_NAMESPACE::SerialMIDI<SoftwareSerial>;
 int rxPin = 11;
 int txPin = 12;
-SoftwareSerial midiSerial = SoftwareSerial(rxPin, txPin);
+SoftwareSerial debugSerial = SoftwareSerial(rxPin, txPin);
 //Transport serialMIDI(midiSerial);
 //MIDI_NAMESPACE::MidiInterface<Transport> MIDI((Transport&)serialMIDI);
 
@@ -67,7 +67,7 @@ int toggleInterval = 100;
 int toggleMulti = 5;
 char* toggleUnit = "mys";
 
-int bpm = 40;
+int bpm = 60;
 int bpmMulti = 1;
 char* bpmUnit = "bpm";
 
@@ -149,7 +149,7 @@ void handleStop(void);
 ///// SETUP /// SETUP /// SETUP /////
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(115200);
+  Serial.begin(31250);
   // enable the standard led on pin 13.
   pinMode(LED_BUILTIN, OUTPUT);      // sets the digital pin as output
   digitalWrite(LED_BUILTIN, HIGH);
@@ -170,7 +170,7 @@ void setup() {
   //MIDI.setHandleClock(handleClock);
   //MIDI.setHandleStart(handleStart);
   //MIDI.begin(); // default Channel 1
-  midiSerial.begin(31250);
+  debugSerial.begin(9600);
   
   //Setup of display SSD1306Ascii
   Wire.begin();
@@ -240,7 +240,7 @@ void setup() {
 ///// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /// LOOP /////
 void loop() {
   // put your main code here, to run repeatedly:
-    
+  
   if (debugFlag == 1 && beatIndex == 7) {
     beatMillisTest = 0;
     beatMillisTestOne = 0;
@@ -252,11 +252,12 @@ void loop() {
   }
   if (beatIndex == 2) {
     beatMillisTestTwo = millis();
-  }
-  if (debugFlag == 0) {
     beatMillisTest = beatMillisTestTwo - beatMillisTestOne;
   }
-
+  if (debugFlag == 0) {
+    
+  }
+  
   if (beatIndex == 0 || beatIndex == 2 || beatIndex == 4 || beatIndex == 6) {
     digitalWrite(7, HIGH);
   }
@@ -264,11 +265,11 @@ void loop() {
     digitalWrite(7, LOW);
   }
 
-  if (midiSerial.available() > 0 && doTapFlag == 0) {
-    if (midiSerial.read() == 248) {
+  if (Serial.available() > 0 && doTapFlag == 0) {
+    if (Serial.read() == 248) {
       handleMidiClock();
     }
-    else if (midiSerial.read() == 250) {
+    else if (Serial.read() == 250) {
       //beatInterruptCnt = 0;
       beatIndex = 0;
       beatMidiIndex = 0;
@@ -277,9 +278,12 @@ void loop() {
     }
   }
   handleISRResult();
+  doTapFlag = tapBeatOut(beatIndex, doTapFlag);
 
-  serialMsg(msgInterval);
-  
+  if ( doTapFlag == 0 ) {
+    serialMsg(msgInterval);
+  }
+
   button1.tick();
   button2.tick();
 
@@ -307,12 +311,12 @@ void loop() {
     if (beatIndex == 7) {
       refreshSyncFlag = 1;
     }
-    showBeats(beatIndex);  
+    //showBeats(beatIndex);  
   }
   
-  doTapFlag = tapBeatOut(beatIndex, doTapFlag);
   
-  flashLED(beatMidiIndex); //Ansteuerung der LEDs via FastLED abhaengig vom beatIndex
+  
+  //flashLED(beatMidiIndex); //Ansteuerung der LEDs via FastLED abhaengig vom beatIndex
   
 }
 //End of LOOP ///End of LOOP ///End of LOOP ///End of LOOP ///
@@ -333,7 +337,7 @@ bool tapBeatOut (int beatIndex_f, bool doFlag_f) {
         beatMidiIndexComp = 0;
       }
     }
-    else if (millis() - tapMillis_f > 80) { //nach Ablauf von 200ms nach dem Beatwechsel
+    else if (millis() - tapMillis_f > 10) { //nach Ablauf von 200ms nach dem Beatwechsel
       digitalWrite(tapPin, HIGH);                 //setze den Ausgang HIGH
       digitalWrite(LED_BUILTIN, HIGH);
       if (tapCnt_f > 4) {                   //nach Durchgang von 4 "Taps" setze doFlag_f auf "erledigt"
@@ -348,11 +352,11 @@ bool tapBeatOut (int beatIndex_f, bool doFlag_f) {
 void handleMidiClock(void) {
   
   if(beatMidiCnt == 24) { //96 = 4* (24 PPQN) Achtung zugehoeriger Zaehler beatMidiCnt wird auf 1 zurueckgesetzt
+    beatMidiCnt = 0;
+    beatMidiMillisTwo = beatMidiMillisOne;
     beatMidiMillisOne = millis();
     beatMidiPeriod = (beatMidiMillisOne - beatMidiMillisTwo);
-    beatMidiMillisTwo = millis();
-    bpmMidi = round(60000/beatMidiPeriod);
-    beatMidiCnt = 0;
+    bpmMidi = 60000/beatMidiPeriod;
     beatMidiIndex = beatMidiIndex + 2;
     if (beatMidiIndex > 7) {
       beatMidiIndex = 0;
@@ -556,9 +560,9 @@ void flashLED(int beatIndex_f) {
           leds[7] = CRGB::Yellow; 
       break;
       default:
-        for (int k = 0; k < 8; k++) {
-          leds[k] = CRGB::Black;
-        }
+        //for (int k = 0; k < 8; k++) {
+        //  leds[k] = CRGB::Black;
+        //}
       break;
     }
     
@@ -607,35 +611,35 @@ void serialMsg(int msgZeit) {
   if (millis() - msgMillis > msgZeit) {
     msgMillis = millis();
     
-    Serial.println("Debug serialMsg");
-    Serial.print("Vergangene Millisekunden seit Programmstart: ");
-    Serial.println(millis());
-    Serial.println("----- ----- ----- ----- -----");
-    Serial.print("bpm = ");
-    Serial.println(bpm);
-    Serial.print("bpmMidi = ");
-    Serial.println(bpmMidi);
-    Serial.print("beatPeriod = ");
-    Serial.println(beatPeriod);
-    Serial.print("beatMidiPeriod = ");
-    Serial.println(beatMidiPeriod);
-    Serial.print("beatIndexComp = "); 
-    Serial.println(beatIndexComp);
-    Serial.print("beatMidiIndexComp = "); 
-    Serial.println(beatMidiIndexComp);
-    Serial.print("enterMenu = ");
-    Serial.println(enterMenu);
-    Serial.print("timeDiff Index 0 and 2 = ");
-    Serial.println(beatMillisTest);
-    Serial.print("flashTestCnt = ");
-    Serial.println(flashTestCnt);
+    debugSerial.println("Debug serialMsg");
+    debugSerial.print("Vergangene Millisekunden seit Programmstart: ");
+    debugSerial.println(millis());
+    debugSerial.println("----- ----- ----- ----- -----");
+    debugSerial.print("bpm = ");
+    debugSerial.println(bpm);
+    debugSerial.print("bpmMidi = ");
+    debugSerial.println(bpmMidi);
+    debugSerial.print("beatPeriod = ");
+    debugSerial.println(beatPeriod);
+    debugSerial.print("beatMidiPeriod = ");
+    debugSerial.println(beatMidiPeriod);
+    debugSerial.print("beatIndexComp = "); 
+    debugSerial.println(beatIndexComp);
+    debugSerial.print("beatMidiIndexComp = "); 
+    debugSerial.println(beatMidiIndexComp);
+    debugSerial.print("enterMenu = ");
+    debugSerial.println(enterMenu);
+    debugSerial.print("timeDiff Index 0 and 2 = ");
+    debugSerial.println(beatMillisTest);
+    debugSerial.print("flashTestCnt = ");
+    debugSerial.println(flashTestCnt);
     debugFlag = 0;
   }
 }
 
 // This function will be called when the button1 was pressed 1 time.
 void click1() {
-  Serial.println("Button 1 click.");
+  debugSerial.println("Button 1 click.");
   if (enterMenu == 0) {
     enterMenu = 1;
     menu_ssd1306AsciiPrint();
@@ -647,14 +651,14 @@ void click1() {
 
 // This function will be called when the button1 was pressed 2 times in a short timeframe.
 void doubleclick1() {
-  Serial.println("Button 1 doubleclick.");
+  debugSerial.println("Button 1 doubleclick.");
   vorZurueckB = -1;
   //lastUsed = millis();
 } // doubleclick1
 
 // This function will be called once, when the button1 is pressed for a long time.
 void longPressStart1() {
-  Serial.println("Button 1 longPress start");
+  debugSerial.println("Button 1 longPress start");
 } // longPressStart1
 
 // This function will be called often, while the button1 is pressed for a long time.
@@ -665,26 +669,26 @@ void longPress1() {
 
 // This function will be called once, when the button1 is released after beeing pressed for a long time.
 void longPressStop1() {
-  Serial.println("Button 1 longPress stop");
+  debugSerial.println("Button 1 longPress stop");
 } // longPressStop1
 
 void click2() {
-  Serial.println("Button 2 click.");
+  debugSerial.println("Button 2 click.");
   doTapFlag = 1;
 } // click1
 
 void doubleclick2() {
-  Serial.println("Button 2 doubleclick.");
+  debugSerial.println("Button 2 doubleclick.");
   beatIndexComp = 0;
   beatMidiIndexComp = 0;
 } // doubleclick2
 
 //Menue Funktionen bei Aufruf
 void a1action(){ 
-  Serial.println("A1 action!\n");
+  debugSerial.println("A1 action!\n");
 }
 void a2action(){ 
-  Serial.println("A2 action!\n");
+  debugSerial.println("A2 action!\n");
 }
 void a3action(){
   //Serial.println("A3 action!\n");
@@ -698,7 +702,7 @@ void a3action(){
   //}
 }
 void a4action(){ 
-  Serial.println("A4 action!\n");
+  debugSerial.println("A4 action!\n");
   enterMenu = 0;
   refreshFlag = 1;
   clearFlag = 1;
